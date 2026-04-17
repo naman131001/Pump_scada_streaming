@@ -105,7 +105,8 @@ def _get_iot_client(pump_id: int):
     try:
         from azure.iot.device import IoTHubDeviceClient
         client = IoTHubDeviceClient.create_from_connection_string(
-            IOT_CONN_STRINGS[pump_id]
+            IOT_CONN_STRINGS[pump_id],
+            websockets=True  # 👈 THIS
         )
         client.connect()
         _iot_clients[pump_id] = client
