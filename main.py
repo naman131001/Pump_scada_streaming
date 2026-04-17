@@ -98,22 +98,35 @@ BLOB_FOLDER = "pump_scada_py"
 
 def _get_iot_client(pump_id: int):
     """Return a connected IoTHubDeviceClient for the given pump, or None."""
-    if pump_id not in IOT_CONN_STRINGS:
+    conn_str = IOT_CONN_STRINGS.get(pump_id)
+    if not conn_str:
         return None
     if pump_id in _iot_clients:
         return _iot_clients[pump_id]
     try:
         from azure.iot.device import IoTHubDeviceClient
         client = IoTHubDeviceClient.create_from_connection_string(
-            IOT_CONN_STRINGS[pump_id],
-            websockets=True  # 👈 THIS
+            conn_str,
+            websockets=True,
+            # Disable auto-reconnect — we handle reconnects ourselves on the
+            # next tick, which prevents the SDK background thread from flooding
+            # logs with ConnectionDroppedError on every retry.
+            auto_reconnect=False,
         )
+
+        # Purge stale client from cache the moment the SDK detects a drop
+        def _on_disconnect(patch_pump_id=pump_id):
+            logger.warning(f"IoT Hub: connection dropped for pump {patch_pump_id}, will reconnect on next tick")
+            _iot_clients.pop(patch_pump_id, None)
+
+        client.on_connection_state_change = _on_disconnect
         client.connect()
         _iot_clients[pump_id] = client
         logger.info(f"IoT Hub: connected pump {pump_id}")
         return client
     except Exception as e:
         logger.warning(f"IoT Hub: failed to connect pump {pump_id}: {e}")
+        _iot_clients.pop(pump_id, None)
         return None
 
 
@@ -135,7 +148,11 @@ async def _send_tick_to_iot_hub(rows: list[dict]):
             await loop.run_in_executor(None, client.send_message, msg)
         except Exception as e:
             logger.warning(f"IoT Hub send failed for pump {pump_id}: {e}")
-            # Drop stale client so it reconnects on next tick
+            # Always drop stale client so we reconnect fresh on next tick
+            try:
+                client.disconnect()
+            except Exception:
+                pass
             _iot_clients.pop(pump_id, None)
 
 
