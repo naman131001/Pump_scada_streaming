@@ -1,0 +1,10 @@
+.env
+__pycache__
+.vite
+.env.*
+!.env.example
+node_modules/
+dist/
+build/
+pycache/
+*.pyc
